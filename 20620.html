@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>ADOFAI Ultimate - 動態背景版</title>
+    <style>
+        :root { --p: #00d4ff; --s: #ff4d4d; --bg: #050505; }
+        body { margin: 0; background: var(--bg); overflow: hidden; font-family: 'Segoe UI', 'Microsoft JhengHei', sans-serif; color: white; }
+        canvas { display: block; position: absolute; z-index: 0; }
+        
+        /* 選單介面 */
+        #ui-overlay {
+            position: absolute; inset: 0; display: flex; justify-content: center; align-items: center;
+            background: rgba(0,0,0,0.9); backdrop-filter: blur(20px); z-index: 100;
+        }
+        .menu-box { background: #111; padding: 30px; border-radius: 24px; width: 480px; text-align: center; border: 1px solid #333; box-shadow: 0 0 50px rgba(0,0,0,0.5); }
+        .setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: left; margin-top: 15px; }
+        .music-card { grid-column: span 2; background: #222; padding: 15px; border-radius: 12px; border: 2px solid #444; margin-bottom: 10px; transition: 0.3s; }
+        .music-card:hover { border-color: var(--p); }
+
+        select, input, button { 
+            width: 100%; padding: 12px; margin-top: 5px; border-radius: 8px; 
+            border: 1px solid #333; background: #1a1a1a; color: white; font-size: 14px; 
+        }
+        button { 
+            background: linear-gradient(45deg, var(--p), var(--s)); border: none; 
+            font-weight: bold; cursor: pointer; height: 55px; font-size: 18px; margin-top: 20px;
+        }
+
+        /* 遊戲 HUD */
+        #top-hud {
+            position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
+            text-align: center; pointer-events: none; z-index: 50;
+        }
+        #judgement-text { font-size: 50px; font-weight: 900; opacity: 0; text-shadow: 0 0 20px rgba(255,255,255,0.5); }
+        #combo-display { font-size: 26px; font-weight: bold; opacity: 0; margin-top: 5px; color: #aaa; }
+        
+        #player-card {
+            position: absolute; top: 20px; left: 20px; display: none;
+            align-items: center; gap: 12px; background: rgba(0,0,0,0.6);
+            padding: 8px 15px; border-radius: 50px; border: 1px solid #444; z-index: 10;
+        }
+        #player-avatar { width: 45px; height: 45px; border-radius: 50%; border: 2px solid var(--p); }
+    </style>
+</head>
+<body>
+
+    <div id="ui-overlay">
+        <div class="menu-box">
+            <h1 id="ui-title" style="color:var(--p); margin:0;">節奏選單</h1>
+            
+            <div class="setting-grid">
+                <div class="music-card">
+                    <label style="font-size:12px; color:#888;">選擇音樂曲目 (內置庫)</label>
+                    <select id="musicSelect" onchange="previewMusic()">
+                        <option value="lofi">Lofi Dreams (60 BPM) - 極慢</option>
+                        <option value="chill" selected>Midnight Chill (90 BPM) - 慢速</option>
+                        <option value="electro">Electro Dash (140 BPM) - 快速</option>
+                    </select>
+                </div>
+
+                <div class="input-group">
+                    <label style="font-size:12px; color:#888;">玩家名稱</label>
+                    <input type="text" id="playerName" value="節奏大師">
+                </div>
+                <div class="input-group">
+                    <label style="font-size:12px; color:#888;">語言 / Language</label>
+                    <select id="langSelect" onchange="updateLanguage()">
+                        <option value="zh">繁體中文</option>
+                        <option value="en">English</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label style="font-size:12px; color:#888;">速度倍率</label>
+                    <select id="speedMultiplier">
+                        <option value="0.5">0.5x (新手)</option>
+                        <option value="0.8" selected>0.8x (偏慢)</option>
+                        <option value="1.0">1.0x (原速)</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label style="font-size:12px; color:#888;">球體尺寸</label>
+                    <select id="ballSize">
+                        <option value="12">標準</option>
+                        <option value="18">大球</option>
+                    </select>
+                </div>
+            </div>
+
+            <button id="startBtn" onclick="startGame()">開始挑戰</button>
+        </div>
+    </div>
+
+    <div id="top-hud">
+        <div id="judgement-text">PERFECT</div>
+        <div id="combo-display">0 COMBO</div>
+    </div>
+
+    <div id="player-card">
+        <img id="player-avatar" src="https://via.placeholder.com/45" onerror="this.src='https://via.placeholder.com/45'">
+        <div id="stats">
+            <b id="p-name">Player</b><br>
+            <small id="l-score">分數</small>: <span id="score-val">0</span>
+        </div>
+    </div>
+
+    <canvas id="mainCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const judgeText = document.getElementById('judgement-text');
+        const comboDisp = document.getElementById('combo-display');
+
+        // 音樂配置資料庫 (包含背景風格)
+        const musicLib = {
+            lofi: { 
+                bpm: 60, p: '#8ecae6', s: '#219ebc', 
+                bgType: 'stars', bgPrimary: '#050a10', bgSecondary: '#071822',
+                label: '慢速舒緩' 
+            },
+            chill: { 
+                bpm: 90, p: '#fbc531', s: '#eb3b5a', 
+                bgType: 'nebula', bgPrimary: '#080808', bgSecondary: '#1a1a1a',
+                label: '標準放鬆' 
+            },
+            electro: { 
+                bpm: 140, p: '#a43eff', s: '#39ff14', 
+                bgType: 'grid', bgPrimary: '#050010', bgSecondary: '#100020',
+                label: '電子快節奏' 
+            }
+        };
+
+        let isRunning = false;
+        let score = 0, combo = 0, currentTile = 0, angle = 0;
+        let tiles = [], particles = [], pivotBall = 'blue';
+        let config = { bpm: 90, speed: 0.8, ballR: 14, spacing: 80 };
+        let currentMusicData = musicLib.chill; // 記錄當前音樂主題
+
+        // 動態背景專用變數
+        let gridLines = [];
+        let nebulaColors = [];
+        let backgroundAnimFrame = 0;
+
+        function updateLanguage() {
+            const isEn = document.getElementById('langSelect').value === 'en';
+            document.getElementById('ui-title').innerText = isEn ? "RHYTHM MENU" : "節奏選單";
+            document.getElementById('startBtn').innerText = isEn ? "START GAME" : "開始挑戰";
+            document.getElementById('l-score').innerText = isEn ? "Score" : "分數";
+        }
+
+        function previewMusic() {
+            const m = musicLib[document.getElementById('musicSelect').value];
+            document.documentElement.style.setProperty('--p', m.p); // 更新 CSS 變數
+            document.documentElement.style.setProperty('--s', m.s);
+            // 不在這裡播放音樂，只更新視覺
+        }
+
+        function generateMap() {
+            tiles = [{x: 0, y: 0}];
+            let x = 0, y = 0;
+            const path = "RRUURRDDLLRRUUURRRDLL".repeat(10).split('');
+            path.forEach(d => {
+                if(d==='R') x += config.spacing; else if(d==='L') x -= config.spacing;
+                else if(d==='U') y -= config.spacing; else if(d==='D') y += config.spacing;
+                tiles.push({x: x, y: y});
+            });
+            const ox = canvas.width/2, oy = canvas.height/2;
+            tiles.forEach(t => { t.x += ox; t.y += oy; });
+        }
+
+        function initBackgroundElements() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            
+            // 清空所有舊的背景元素
+            particles = [];
+            gridLines = [];
+            nebulaColors = [];
+            
+            // 根據當前音樂主題初始化背景元素
+            if (currentMusicData.bgType === 'stars' || currentMusicData.bgType === 'nebula') {
+                for (let i = 0; i < 150; i++) {
+                    particles.push({
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * canvas.height,
+                        s: Math.random() * 2 + 0.5,
+                        v: Math.random() * 0.8 + 0.2,
+                        c: currentMusicData.bgType === 'nebula' ? `hsl(${Math.random() * 360}, 70%, 70%)` : 'white'
+                    });
+                }
+                if (currentMusicData.bgType === 'nebula') {
+                    for(let i=0; i<5; i++) {
+                        nebulaColors.push({
+                            x: Math.random() * canvas.width,
+                            y: Math.random() * canvas.height,
+                            r: Math.random() * 300 + 200, // 半徑
+                            c: `hsla(${Math.random() * 360}, 80%, 60%, 0.15)`
+                        });
+                    }
+                }
+            } else if (currentMusicData.bgType === 'grid') {
+                for (let i = 0; i < 50; i++) {
+                    gridLines.push({
+                        x1: Math.random() * canvas.width,
+                        y1: Math.random() * canvas.height,
+                        x2: Math.random() * canvas.width,
+                        y2: Math.random() * canvas.height,
+                        speed: Math.random() * 2 + 1,
+                        hue: Math.random() * 360
+                    });
+                }
+            }
+        }
+
+        function drawDynamicBackground() {
+            // 清空畫布
+            ctx.fillStyle = currentMusicData.bgPrimary;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (currentMusicData.bgType === 'stars') {
+                ctx.fillStyle = 'white';
+                particles.forEach(p => {
+                    ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, Math.PI * 2); ctx.fill();
+                    p.y += p.v;
+                    if (p.y > canvas.height) p.y = 0;
+                });
+            } else if (currentMusicData.bgType === 'nebula') {
+                // 畫漸變星雲
+                nebulaColors.forEach(n => {
+                    const gradient = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r);
+                    gradient.addColorStop(0, n.c);
+                    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    // 輕微移動星雲
+                    n.x += Math.sin(backgroundAnimFrame * 0.005 + n.r) * 0.5;
+                    n.y += Math.cos(backgroundAnimFrame * 0.005 + n.r) * 0.5;
+                    if (n.x < -n.r || n.x > canvas.width + n.r || n.y < -n.r || n.y > canvas.height + n.r) {
+                        n.x = Math.random() * canvas.width;
+                        n.y = Math.random() * canvas.height;
+                    }
+                });
+
+                // 畫星雲粒子
+                particles.forEach(p => {
+                    ctx.fillStyle = p.c;
+                    ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, Math.PI * 2); ctx.fill();
+                    p.y += p.v;
+                    if (p.y > canvas.height) p.y = 0;
+                });
+
+            } else if (currentMusicData.bgType === 'grid') {
+                // 畫動態網格線
+                ctx.strokeStyle = `hsla(${backgroundAnimFrame % 360}, 80%, 60%, 0.1)`;
+                ctx.lineWidth = 1;
+                for (let i = 0; i < canvas.width; i += 50) {
+                    ctx.beginPath();
+                    ctx.moveTo(i + (backgroundAnimFrame % 50), 0);
+                    ctx.lineTo(i + (backgroundAnimFrame % 50), canvas.height);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(0, i + (backgroundAnimFrame % 50));
+                    ctx.lineTo(canvas.width, i + (backgroundAnimFrame % 50));
+                    ctx.stroke();
+                }
+
+                // 畫閃爍粒子
+                particles.forEach(p => {
+                    ctx.fillStyle = `hsla(${p.hue || (backgroundAnimFrame * 0.5 % 360)}, 100%, 70%, ${Math.sin(backgroundAnimFrame * 0.1 + p.x) * 0.5 + 0.5})`;
+                    ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, Math.PI * 2); ctx.fill();
+                    p.x += Math.cos(backgroundAnimFrame * 0.02 + p.y) * p.v * 0.1;
+                    p.y += Math.sin(backgroundAnimFrame * 0.02 + p.x) * p.v * 0.1;
+
+                    if (p.x < 0 || p.x > canvas.width || p.y < 0 || p.y > canvas.height) {
+                        p.x = Math.random() * canvas.width;
+                        p.y = Math.random() * canvas.height;
+                    }
+                });
+            }
+            backgroundAnimFrame++;
+        }
+
+        function startGame() {
+            const mType = document.getElementById('musicSelect').value;
+            currentMusicData = musicLib[mType]; // 設定當前音樂主題資料
+            
+            config.bpm = currentMusicData.bpm; // 從音樂數據獲取 BPM
+            config.speed = parseFloat(document.getElementById('speedMultiplier').value);
+            config.ballR = parseInt(document.getElementById('ballSize').value);
+            
+            rotationSpeed = ((config.bpm / 60) * Math.PI / 60) * config.speed;
+            
+            document.getElementById('p-name').innerText = document.getElementById('playerName').value;
+            document.getElementById('ui-overlay').style.display = 'none';
+            document.getElementById('player-card').style.display = 'flex';
+            
+            initBackgroundElements(); // 根據選定的背景類型初始化
+            generateMap();
+            
+            score = 0; combo = 0; currentTile = 0; angle = Math.PI;
+            isRunning = true;
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop() {
+            if(!isRunning) return;
+            drawDynamicBackground(); // 繪製動態背景
+            
+            ctx.save();
+            ctx.translate(canvas.width/2 - tiles[currentTile].x, canvas.height/2 - tiles[currentTile].y);
+            
+            tiles.forEach((t, i) => {
+                if(Math.abs(i-currentTile) > 12) return;
+                const isNext = (i === currentTile + 1);
+                ctx.strokeStyle = i >= currentTile ? 'white' : '#222';
+                ctx.lineWidth = isNext ? 5 : 2;
+                if(isNext) {
+                    ctx.shadowBlur = 15; ctx.shadowColor = "white";
+                    ctx.fillStyle = "rgba(255,255,255,0.1)";
+                    ctx.fillRect(t.x - config.spacing/2, t.y - config.spacing/2, config.spacing, config.spacing);
+                }
+                ctx.strokeRect(t.x - config.spacing/2, t.y - config.spacing/2, config.spacing, config.spacing);
+                ctx.shadowBlur = 0;
+            });
+
+            angle += rotationSpeed;
+            const px = tiles[currentTile].x, py = tiles[currentTile].y;
+            const ox = px + Math.cos(angle) * config.spacing, oy = py + Math.sin(angle) * config.spacing;
+            
+            ctx.beginPath(); ctx.strokeStyle = 'rgba(255,255,255,0.2)'; 
+            ctx.moveTo(px, py); ctx.lineTo(ox, oy); ctx.stroke();
+            
+            drawBall(pivotBall==='blue'?px:ox, pivotBall==='blue'?py:oy, currentMusicData.p); // 使用音樂專屬色
+            drawBall(pivotBall==='red'?px:ox, pivotBall==='red'?py:oy, currentMusicData.s); // 使用音樂專屬色
+            ctx.restore();
+
+            document.getElementById('score-val').innerText = score;
+            if(angle > Math.PI * 4.2) { triggerJudge("MISS", "#ff5555"); combo = 0; nextStep(); }
+            requestAnimationFrame(gameLoop);
+        }
+
+        function drawBall(x, y, c) {
+            ctx.fillStyle = c; ctx.shadowBlur = 15; ctx.shadowColor = c;
+            ctx.beginPath(); ctx.arc(x, y, config.ballR, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+        }
+
+        function handleHit() {
+            if(!isRunning || currentTile >= tiles.length-1) return;
+            const ox = tiles[currentTile].x + Math.cos(angle) * config.spacing;
+            const oy = tiles[currentTile].y + Math.sin(angle) * config.spacing;
+            const d = Math.sqrt((ox - tiles[currentTile+1].x)**2 + (oy - tiles[currentTile+1].y)**2);
+            
+            const isEn = document.getElementById('langSelect').value === 'en';
+            if(d < config.spacing * 0.5) {
+                const perf = d < config.spacing * 0.2;
+                const txt = perf ? (isEn ? "PERFECT" : "完美") : (isEn ? "GREAT" : "良好");
+                triggerJudge(txt, perf ? "#00ff88" : "#ffff00");
+                score += perf ? 100 : 50; combo++;
+                nextStep();
+            } else {
+                triggerJudge(isEn ? "MISS" : "錯過", "#ff5555");
+                combo = 0;
+            }
+            updateCombo();
+        }
+
+        function triggerJudge(t, c) {
+            judgeText.innerText = t; judgeText.style.color = c; judgeText.style.opacity = 1;
+            judgeText.style.transform = "scale(1.2)";
+            setTimeout(() => { judgeText.style.opacity = 0; judgeText.style.transform = "scale(1)"; }, 400);
+        }
+
+        function updateCombo() {
+            if(combo > 0) { comboDisp.innerText = `${combo} COMBO`; comboDisp.style.opacity = 1; }
+            else { comboDisp.style.opacity = 0; }
+        }
+
+        function nextStep() {
+            currentTile++;
+            if(currentTile >= tiles.length-1) { isRunning = false; alert("挑戰完成！"); location.reload(); return; }
+            pivotBall = (pivotBall === 'blue' ? 'red' : 'blue');
+            angle = Math.atan2(tiles[currentTile-1].y - tiles[currentTile].y, tiles[currentTile-1].x - tiles[currentTile].x);
+        }
+
+        window.onclick = handleHit;
+        window.onkeydown = (e) => { if(e.code==='Space') handleHit(); };
+        
+        // 初始設定
+        updateLanguage();
+        previewMusic();
+        // 初始繪製選單背景動畫
+        function animateMenuBackground() {
+            if (!isRunning) {
+                drawDynamicBackground(); // 在選單時也繪製背景動畫
+                requestAnimationFrame(animateMenuBackground);
+            }
+        }
+        initBackgroundElements(); // 初始化選單背景元素
+        animateMenuBackground();
+    </script>
+</body>
+</html>
